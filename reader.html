@@ -84,6 +84,41 @@
   .toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.92);background:rgba(18,18,24,.92);backdrop-filter:blur(24px);padding:18px 28px;border-radius:14px;font-size:15px;color:#fff;font-weight:500;border:1px solid rgba(255,255,255,.1);box-shadow:0 18px 60px rgba(0,0,0,.65);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:50;text-align:center}
   .toast.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
   .toast small{display:block;color:#999;font-size:11px;font-weight:400;margin-top:4px;letter-spacing:.3px}
+
+  /* Add-series card */
+  .add-card{display:flex;align-items:center;justify-content:center;gap:10px;padding:16px 18px;background:linear-gradient(180deg,#171a20,#13161b);border:1px dashed #2e333c;border-radius:12px;cursor:pointer;color:#9cf;font-weight:500;transition:background .15s,border-color .15s,transform .15s;margin-bottom:10px}
+  .add-card:hover{background:linear-gradient(180deg,#1e2229,#181b21);border-color:#4a525c;transform:translateY(-1px)}
+  .add-card .plus{font-size:18px;line-height:1}
+
+  /* Parse modal */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(4,4,8,.72);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+  .modal-backdrop.show{opacity:1;pointer-events:auto}
+  .modal{width:min(720px,92vw);max-height:88vh;display:flex;flex-direction:column;background:linear-gradient(180deg,#16191f,#101319);border:1px solid #2a2f38;border-radius:16px;box-shadow:0 30px 90px rgba(0,0,0,.7);overflow:hidden;transform:translateY(8px) scale(.98);transition:transform .25s ease}
+  .modal-backdrop.show .modal{transform:none}
+  .modal-head{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid #23272f}
+  .modal-head h2{flex:1;font-size:16px;font-weight:600;letter-spacing:.2px;color:#eee}
+  .modal-close{background:transparent;border:0;color:#888;font-size:22px;cursor:pointer;padding:0 4px;line-height:1;transition:color .15s}
+  .modal-close:hover{color:#fff}
+  .modal-body{padding:18px 20px;display:flex;flex-direction:column;gap:12px;overflow:hidden;min-height:0}
+  .modal-body .row{display:flex;gap:10px}
+  .modal-body input[type=url]{flex:1;background:#0c0e13;border:1px solid #2a2f38;color:#eee;padding:11px 14px;border-radius:10px;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;outline:none;transition:border-color .15s,background .15s}
+  .modal-body input[type=url]:focus{border-color:#4a7bcf;background:#0e1119}
+  .modal-body .btn{background:linear-gradient(180deg,#3768c4,#2a539e);border:0;color:#fff;padding:11px 18px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600;letter-spacing:.2px;transition:filter .15s,transform .1s}
+  .modal-body .btn:hover{filter:brightness(1.12)}
+  .modal-body .btn:active{transform:translateY(1px)}
+  .modal-body .btn:disabled{filter:grayscale(.6) brightness(.7);cursor:not-allowed}
+  .modal-body .btn.danger{background:linear-gradient(180deg,#c4453a,#9d342c)}
+  .modal-body .hint{font-size:11px;color:#777;line-height:1.5}
+  .modal-body .hint code{background:#0c0e13;padding:1px 6px;border-radius:4px;color:#9cf;font-size:11px}
+  .modal-body .status{font-size:12px;color:#9ab;display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+  .modal-body .status .pill{padding:2px 9px;border-radius:999px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+  .modal-body .status .pill.idle{background:rgba(140,140,140,.15);color:#aaa}
+  .modal-body .status .pill.running{background:rgba(255,200,80,.15);color:#fc8;animation:pulse 1.5s ease-in-out infinite}
+  .modal-body .status .pill.done{background:rgba(120,200,120,.15);color:#9c9}
+  .modal-body .status .pill.error{background:rgba(220,90,80,.18);color:#f88}
+  @keyframes pulse{50%{opacity:.55}}
+  .modal-body .log{flex:1;min-height:200px;max-height:48vh;overflow-y:auto;background:#06080c;border:1px solid #1d2129;border-radius:10px;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#bcd;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  .modal-body .log:empty::before{content:"лог пуст";color:#444;font-style:italic}
 </style>
 </head>
 <body>
@@ -260,6 +295,12 @@ async function viewSeries(){
     };
     panel.appendChild(r);
   }
+
+  const add = document.createElement('div');
+  add.className = 'add-card';
+  add.innerHTML = `<span class="plus">+</span><span>Добавить серию по URL</span>`;
+  add.onclick = openParseModal;
+  panel.appendChild(add);
 
   const list = document.createElement('div');
   list.className = 'list';
@@ -554,6 +595,126 @@ function attachInput(){
       if (dx < 0) goNext(); else goPrev();
     }
   }, { passive: true });
+}
+
+let parseModalEl = null;
+let parseES = null;
+
+function closeParseModal(){
+  if (parseES){ try { parseES.close(); } catch{} parseES = null; }
+  if (parseModalEl){ parseModalEl.classList.remove('show'); setTimeout(() => { if (parseModalEl){ parseModalEl.remove(); parseModalEl = null; } }, 220); }
+}
+
+function setParseStatus(s){
+  if (!parseModalEl) return;
+  const pill = parseModalEl.querySelector('.pill');
+  const text = parseModalEl.querySelector('.status .text');
+  const runBtn = parseModalEl.querySelector('#m-run');
+  const stopBtn = parseModalEl.querySelector('#m-stop');
+  const input = parseModalEl.querySelector('input[type=url]');
+  const map = { idle:['idle','готов'], running:['running','работает…'], done:['done','готово ✓'], error:['error','ошибка'] };
+  const [cls, label] = map[s] || map.idle;
+  pill.className = 'pill ' + cls;
+  pill.textContent = cls;
+  text.textContent = label;
+  const running = s === 'running';
+  runBtn.disabled = running;
+  input.disabled = running;
+  stopBtn.style.display = running ? '' : 'none';
+}
+
+function appendLog(text){
+  if (!parseModalEl) return;
+  const log = parseModalEl.querySelector('.log');
+  const wasAtBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 10;
+  log.textContent += text;
+  if (wasAtBottom) log.scrollTop = log.scrollHeight;
+}
+
+function connectParseStream(){
+  if (parseES){ try { parseES.close(); } catch{} }
+  parseES = new EventSource('/api/parse/events');
+  parseES.onmessage = (ev) => {
+    let d; try { d = JSON.parse(ev.data); } catch { return; }
+    if (d.type === 'idle'){ setParseStatus('idle'); parseES.close(); parseES = null; return; }
+    if (d.type === 'meta'){ setParseStatus(d.status); return; }
+    if (d.type === 'log'){ appendLog(d.text); return; }
+    if (d.type === 'done'){
+      setParseStatus(d.code === 0 ? 'done' : 'error');
+      parseES.close(); parseES = null;
+      if (d.code === 0) toast('Серия загружена', null, 1600);
+    }
+  };
+  parseES.onerror = () => { /* keep retrying — EventSource auto-reconnects */ };
+}
+
+async function openParseModal(){
+  if (parseModalEl) return;
+  parseModalEl = document.createElement('div');
+  parseModalEl.className = 'modal-backdrop';
+  parseModalEl.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <h2>Добавить серию</h2>
+        <button class="modal-close" id="m-x" aria-label="Закрыть">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="row">
+          <input type="url" id="m-url" placeholder="https://…/reader/<news_id>/<chapter_id>  или  URL страницы серии" autocomplete="off" spellcheck="false">
+          <button class="btn" id="m-run">Запустить</button>
+          <button class="btn danger" id="m-stop" style="display:none">Стоп</button>
+        </div>
+        <div class="hint">Поддерживается URL страницы главы (<code>/reader/&lt;news_id&gt;/&lt;chapter_id&gt;</code>) — качается с этой главы и дальше, или URL серии — качается всё с начала.</div>
+        <div class="status"><span class="pill idle">idle</span><span class="text">готов</span></div>
+        <div class="log" id="m-log"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(parseModalEl);
+  requestAnimationFrame(() => parseModalEl.classList.add('show'));
+
+  parseModalEl.querySelector('#m-x').onclick = closeParseModal;
+  parseModalEl.addEventListener('click', (e) => { if (e.target === parseModalEl) closeParseModal(); });
+  parseModalEl.querySelector('#m-run').onclick = submitParse;
+  parseModalEl.querySelector('#m-stop').onclick = stopParse;
+  parseModalEl.querySelector('#m-url').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter'){ e.preventDefault(); submitParse(); }
+    if (e.key === 'Escape'){ e.preventDefault(); closeParseModal(); }
+  });
+  parseModalEl.querySelector('#m-url').focus();
+
+  try {
+    const st = await fetchJSON('/api/parse/status');
+    setParseStatus(st.status);
+    if (st.url) parseModalEl.querySelector('#m-url').value = st.url;
+    if (st.status === 'running' || st.status === 'done' || st.status === 'error') connectParseStream();
+  } catch {}
+}
+
+async function submitParse(){
+  if (!parseModalEl) return;
+  const input = parseModalEl.querySelector('#m-url');
+  const u = (input.value || '').trim();
+  if (!u){ input.focus(); return; }
+  const log = parseModalEl.querySelector('.log');
+  log.textContent = '';
+  setParseStatus('running');
+  try {
+    const r = await fetch('/api/parse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: u }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok){ appendLog(`[ошибка] ${data.error || r.status}\n`); setParseStatus('error'); return; }
+    connectParseStream();
+  } catch (e){
+    appendLog(`[ошибка сети] ${e.message}\n`);
+    setParseStatus('error');
+  }
+}
+
+async function stopParse(){
+  try { await fetch('/api/parse/stop', { method: 'POST' }); } catch {}
 }
 
 function render(){
