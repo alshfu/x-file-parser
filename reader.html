@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Читалка</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;background:#08080a;color:#eee;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+  a{color:#9cf;text-decoration:none}
+
+  .panel{padding:36px 24px;max-width:920px;margin:0 auto;height:100%;overflow-y:auto;animation:fadeIn .35s ease}
+  .panel h1{font-size:28px;margin-bottom:6px;font-weight:600;letter-spacing:-0.5px;background:linear-gradient(135deg,#fff,#9aa);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .panel .subtitle{color:#666;font-size:13px;margin-bottom:24px}
+  .list{display:grid;gap:10px}
+  .card{position:relative;display:flex;justify-content:space-between;align-items:center;padding:16px 18px;background:linear-gradient(180deg,#1a1d23,#15171c);border:1px solid #262a30;border-radius:12px;cursor:pointer;transition:transform .15s ease,background .15s,border-color .15s,box-shadow .15s;overflow:hidden}
+  .card:hover{background:linear-gradient(180deg,#22262d,#1c2026);border-color:#3a414a;transform:translateY(-1px);box-shadow:0 6px 22px rgba(0,0,0,.35)}
+  .card .col{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+  .card .name{font-weight:500;color:#eaeaea;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .card .meta{color:#888;font-size:12px;font-variant-numeric:tabular-nums}
+  .card .progress-text{color:#aabbcc;font-size:11px;display:flex;align-items:center;gap:8px;font-variant-numeric:tabular-nums}
+  .card .progress-text .dot{width:5px;height:5px;border-radius:50%;background:#9cf;box-shadow:0 0 8px rgba(156,207,255,.6);flex:none}
+  .card .progress-text.done .dot{background:#7c7;box-shadow:0 0 8px rgba(120,200,120,.6)}
+  .card .right{display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex:none}
+  .card .chip{background:rgba(156,207,255,.1);color:#9cf;border:1px solid rgba(156,207,255,.2);padding:3px 9px;border-radius:999px;font-size:11px;font-weight:500;font-variant-numeric:tabular-nums}
+  .card .chip.done{background:rgba(124,204,124,.12);color:#9c9;border-color:rgba(124,204,124,.22)}
+  .card .pbar{position:absolute;left:0;right:0;bottom:0;height:2px;background:transparent}
+  .card .pbar > i{display:block;height:100%;background:linear-gradient(90deg,#69b,#9cf);transition:width .3s ease}
+  .card .pbar.done > i{background:linear-gradient(90deg,#5a7,#9c9)}
+
+  .resume{margin-bottom:22px;padding:18px 20px;background:linear-gradient(135deg,rgba(80,120,180,.18),rgba(80,120,180,.06));border:1px solid rgba(156,207,255,.22);border-radius:14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:14px;transition:transform .15s,background .15s,border-color .15s,box-shadow .15s}
+  .resume:hover{background:linear-gradient(135deg,rgba(80,120,180,.25),rgba(80,120,180,.1));border-color:rgba(156,207,255,.35);transform:translateY(-1px);box-shadow:0 8px 26px rgba(60,100,160,.25)}
+  .resume .label{font-size:11px;color:#9cf;text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:5px}
+  .resume .title{font-size:16px;font-weight:600;color:#fff;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .resume .sub{font-size:12px;color:#9ab;font-variant-numeric:tabular-nums}
+  .resume .arrow{font-size:22px;color:#9cf;flex:none}
+  .back{display:inline-flex;align-items:center;gap:6px;margin-bottom:18px;color:#9cf;cursor:pointer;font-size:13px;padding:6px 0;transition:color .15s}
+  .back:hover{color:#cfe7ff}
+
+  /* reader stage with 3D perspective for page flip */
+  .reader{position:fixed;inset:0;background:radial-gradient(ellipse at center,#1a1a22 0%,#06060a 80%);display:flex;align-items:center;justify-content:center;touch-action:none;overflow:hidden;perspective:2600px;perspective-origin:50% 55%}
+  .stage{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;padding:0;transform-style:preserve-3d}
+  .spread{position:absolute;display:flex;align-items:center;justify-content:center;gap:1px;width:100%;height:100%;max-width:100%;max-height:100%;will-change:transform,opacity,filter;backface-visibility:hidden;transform-style:preserve-3d;filter:drop-shadow(0 24px 60px rgba(0,0,0,.65))}
+  .spread img{display:block;height:100%;max-height:100%;width:auto;object-fit:contain;background:#0e0e10;user-select:none;-webkit-user-drag:none;pointer-events:none}
+  .spread.single img{max-width:100%}
+  .spread.double img{max-width:calc(50% - 1px)}
+
+  /* base state */
+  .spread{transform:rotateY(0deg) translateZ(0);opacity:1}
+  /* entry transitions */
+  .spread.in-next{transform-origin:left center;transform:rotateY(85deg) translateZ(-260px);opacity:.3;filter:drop-shadow(0 24px 60px rgba(0,0,0,.65)) brightness(.7)}
+  .spread.in-prev{transform-origin:right center;transform:rotateY(-85deg) translateZ(-260px);opacity:.3;filter:drop-shadow(0 24px 60px rgba(0,0,0,.65)) brightness(.7)}
+  .spread.settling{transform:rotateY(0deg) translateZ(0);opacity:1;filter:drop-shadow(0 24px 60px rgba(0,0,0,.65)) brightness(1);transition:transform .75s cubic-bezier(.18,.7,.2,1),opacity .45s ease,filter .55s ease}
+  /* exit transitions: flip away around the spine */
+  .spread.out-next{transform-origin:left center;transform:rotateY(-115deg) translateZ(-180px);opacity:0;filter:drop-shadow(0 24px 60px rgba(0,0,0,.65)) brightness(.55);transition:transform .75s cubic-bezier(.55,.05,.6,1),opacity .55s ease .15s,filter .55s ease}
+  .spread.out-prev{transform-origin:right center;transform:rotateY(115deg) translateZ(-180px);opacity:0;filter:drop-shadow(0 24px 60px rgba(0,0,0,.65)) brightness(.55);transition:transform .75s cubic-bezier(.55,.05,.6,1),opacity .55s ease .15s,filter .55s ease}
+
+  /* fold shadow overlay during flip — a subtle vertical gradient that mimics paper bend */
+  .spread::before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(to right,rgba(0,0,0,.45) 0%,rgba(0,0,0,0) 18%,rgba(0,0,0,0) 82%,rgba(0,0,0,.45) 100%);opacity:0;transition:opacity .4s ease}
+  .spread.out-next::before,.spread.in-next::before{opacity:1;background:linear-gradient(to right,rgba(0,0,0,.6) 0%,rgba(0,0,0,.1) 35%,rgba(0,0,0,0) 60%)}
+  .spread.out-prev::before,.spread.in-prev::before{opacity:1;background:linear-gradient(to left,rgba(0,0,0,.6) 0%,rgba(0,0,0,.1) 35%,rgba(0,0,0,0) 60%)}
+
+  .hud{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:rgba(20,20,26,.7);backdrop-filter:blur(14px) saturate(140%);padding:9px 18px;border-radius:999px;font-size:12px;color:#ddd;pointer-events:none;font-variant-numeric:tabular-nums;border:1px solid rgba(255,255,255,.08);box-shadow:0 6px 18px rgba(0,0,0,.4);letter-spacing:.3px;z-index:15}
+  .nav-btn{position:fixed;top:50%;transform:translateY(-50%);width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);backdrop-filter:blur(12px);color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;transition:background .2s,transform .15s;z-index:20}
+  .nav-btn:hover{background:rgba(255,255,255,.13);transform:translateY(-50%) scale(1.05)}
+  .nav-btn:active{transform:translateY(-50%) scale(.95)}
+  .nav-btn.left{left:14px}
+  .nav-btn.right{right:14px}
+
+  .top-bar{position:fixed;top:0;left:0;right:0;padding:14px 18px;background:linear-gradient(to bottom,rgba(0,0,0,.55),transparent);display:flex;align-items:center;gap:14px;color:#ddd;font-size:13px;z-index:15}
+  .top-bar button{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);color:#ddd;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:12px;backdrop-filter:blur(10px);transition:background .15s,border-color .15s}
+  .top-bar button:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
+  .top-bar .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;letter-spacing:.2px}
+
+  .reader.hide-ui .top-bar,.reader.hide-ui .nav-btn,.reader.hide-ui .hud{opacity:0;pointer-events:none}
+  .top-bar,.nav-btn,.hud{transition:opacity .3s}
+
+  .loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#888;flex-direction:column;gap:14px;font-size:12px;letter-spacing:.5px;text-transform:uppercase}
+  .loading::before{content:"";width:30px;height:30px;border:2px solid #2a2a30;border-top-color:#9cf;border-radius:50%;animation:spin .7s linear infinite}
+  .loading .progress{color:#9cf;font-variant-numeric:tabular-nums}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.92);background:rgba(18,18,24,.92);backdrop-filter:blur(24px);padding:18px 28px;border-radius:14px;font-size:15px;color:#fff;font-weight:500;border:1px solid rgba(255,255,255,.1);box-shadow:0 18px 60px rgba(0,0,0,.65);opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:50;text-align:center}
+  .toast.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  .toast small{display:block;color:#999;font-size:11px;font-weight:400;margin-top:4px;letter-spacing:.3px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const app = document.getElementById('app');
+const state = {
+  view:'series', series:null, volume:null,
+  pages:[], aspects:[], spreads:[],
+  volumesCache:null,
+  spreadIdx:0,
+  busy:false,
+};
+
+const fetchJSON = async u => (await fetch(u)).json();
+const escapeHtml = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function plural(n, forms){
+  const a = Math.abs(n)%100, b = a%10;
+  if (a>10 && a<20) return forms[2];
+  if (b>1 && b<5) return forms[1];
+  if (b===1) return forms[0];
+  return forms[2];
+}
+
+const RS_KEY = 'reader.state.v1';
+function loadRS(){ try { return JSON.parse(localStorage.getItem(RS_KEY) || '{}'); } catch { return {}; } }
+function saveRS(s){ try { localStorage.setItem(RS_KEY, JSON.stringify(s)); } catch {} }
+function recordRead(series, volume, page){
+  if (!series || !volume || !page) return;
+  const s = loadRS();
+  if (!s[series]) s[series] = { volumes: {} };
+  if (!s[series].volumes) s[series].volumes = {};
+  const now = Date.now();
+  s[series].lastVolume = volume; s[series].lastPage = page; s[series].lastTs = now;
+  s[series].volumes[volume] = { page, ts: now };
+  saveRS(s);
+}
+function seriesRead(series){ const s = loadRS(); return s[series] || null; }
+function volumeRead(series, volume){ const r = seriesRead(series); return r && r.volumes ? r.volumes[volume] : null; }
+function mostRecentSeries(allSeries){
+  const s = loadRS();
+  let best = null;
+  for (const it of allSeries){
+    const r = s[it.name];
+    if (!r || !r.lastTs) continue;
+    if (!best || r.lastTs > best.ts) best = { ts: r.lastTs, name: it.name, vol: r.lastVolume, page: r.lastPage };
+  }
+  return best;
+}
+function relTime(ts){
+  if (!ts) return '';
+  const d = Math.floor((Date.now() - ts) / 1000);
+  if (d < 45) return 'только что';
+  if (d < 3600){ const m = Math.floor(d / 60); return `${m} ${plural(m, ['минута','минуты','минут'])} назад`; }
+  if (d < 86400){ const h = Math.floor(d / 3600); return `${h} ${plural(h, ['час','часа','часов'])} назад`; }
+  if (d < 86400 * 7){ const dd = Math.floor(d / 86400); return `${dd} ${plural(dd, ['день','дня','дней'])} назад`; }
+  return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function go(url){ history.pushState(null,'',url); render(); }
+window.onpopstate = () => {
+  const u = new URL(location.href);
+  state.series = u.searchParams.get('s');
+  state.volume = u.searchParams.get('v');
+  const p = u.searchParams.get('p');
+  state.spreadIdx = 0;
+  state._pendingPage = p ? parseInt(p,10) : null;
+  state.view = state.volume ? 'reader' : state.series ? 'volumes' : 'series';
+  render();
+};
+
+function toast(text, sub, ms=1500){
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = escapeHtml(text) + (sub ? `<small>${escapeHtml(sub)}</small>` : '');
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
+}
+
+function imageUrl(file){ return `/files/${encodeURIComponent(state.series)}/${encodeURIComponent(state.volume)}/${encodeURIComponent(file)}`; }
+
+async function ensureVolumesCache(){
+  if (state.volumesCache) return state.volumesCache;
+  const data = await fetchJSON(`/api/series/${encodeURIComponent(state.series)}`);
+  state.volumesCache = data.volumes;
+  return state.volumesCache;
+}
+async function siblingVolume(delta){
+  const vols = await ensureVolumesCache();
+  const i = vols.findIndex(v => v.name === state.volume);
+  if (i < 0) return null;
+  const j = i + delta;
+  if (j < 0 || j >= vols.length) return null;
+  return vols[j];
+}
+
+function probe(url){
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => res({w: img.naturalWidth, h: img.naturalHeight});
+    img.onerror = () => res({w: 2, h: 3});
+    img.src = url;
+  });
+}
+async function probeAll(urls, onProgress){
+  const out = new Array(urls.length);
+  let done = 0;
+  const CONCURRENCY = 6;
+  let cursor = 0;
+  async function worker(){
+    while (cursor < urls.length){
+      const i = cursor++;
+      out[i] = await probe(urls[i]);
+      done++;
+      if (onProgress && done % 4 === 0) onProgress(done, urls.length);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(CONCURRENCY, urls.length)}, worker));
+  if (onProgress) onProgress(urls.length, urls.length);
+  return out;
+}
+
+function isLandscape(a){ return a.w > a.h * 1.05; }
+
+function buildSpreads(pages, aspects){
+  const out = [];
+  let i = 0;
+  while (i < pages.length){
+    const a = aspects[i];
+    if (isLandscape(a)){
+      out.push({type:'single', pages:[i]}); i++;
+    } else {
+      if (i + 1 < pages.length && !isLandscape(aspects[i+1])){
+        out.push({type:'double', pages:[i, i+1]}); i += 2;
+      } else {
+        out.push({type:'single', pages:[i]}); i++;
+      }
+    }
+  }
+  return out;
+}
+
+function pageNumToSpreadIdx(pageNum1based){
+  const target = pageNum1based - 1;
+  for (let s = 0; s < state.spreads.length; s++){
+    if (state.spreads[s].pages.includes(target)) return s;
+  }
+  return 0;
+}
+
+async function viewSeries(){
+  const data = await fetchJSON('/api/series');
+  app.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  panel.innerHTML = `<h1>Библиотека</h1><div class="subtitle">${data.length} ${plural(data.length, ['серия','серии','серий'])}</div>`;
+
+  const recent = mostRecentSeries(data);
+  if (recent){
+    const r = document.createElement('div');
+    r.className = 'resume';
+    r.innerHTML = `
+      <div style="min-width:0">
+        <div class="label">Продолжить чтение</div>
+        <div class="title">${escapeHtml(recent.name)}</div>
+        <div class="sub">${escapeHtml(recent.vol)} · стр. ${recent.page} · ${escapeHtml(relTime(recent.ts))}</div>
+      </div>
+      <div class="arrow">›</div>`;
+    r.onclick = () => {
+      state.series = recent.name; state.volume = recent.vol;
+      state._pendingPage = recent.page; state.view = 'reader'; state.volumesCache = null;
+      go(`/?s=${encodeURIComponent(recent.name)}&v=${encodeURIComponent(recent.vol)}&p=${recent.page}`);
+    };
+    panel.appendChild(r);
+  }
+
+  const list = document.createElement('div');
+  list.className = 'list';
+  for (const s of data){
+    const c = document.createElement('div');
+    c.className = 'card';
+    const r = seriesRead(s.name);
+    const progressRow = r && r.lastVolume
+      ? `<div class="progress-text"><span class="dot"></span>${escapeHtml(r.lastVolume)} · стр. ${r.lastPage} · ${escapeHtml(relTime(r.lastTs))}</div>`
+      : '';
+    c.innerHTML = `
+      <div class="col">
+        <span class="name">${escapeHtml(s.name)}</span>
+        <span class="meta">${s.volumes} ${plural(s.volumes, ['том','тома','томов'])} · ${s.pages} стр.</span>
+        ${progressRow}
+      </div>`;
+    c.onclick = () => { state.series = s.name; state.view = 'volumes'; state.volumesCache = null; go(`/?s=${encodeURIComponent(s.name)}`); };
+    list.appendChild(c);
+  }
+  panel.appendChild(list);
+  app.appendChild(panel);
+}
+
+async function viewVolumes(){
+  const data = await fetchJSON(`/api/series/${encodeURIComponent(state.series)}`);
+  state.volumesCache = data.volumes;
+  app.innerHTML = '';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  const back = document.createElement('div');
+  back.className = 'back';
+  back.innerHTML = '← Библиотека';
+  back.onclick = () => { state.view = 'series'; state.series = null; state.volumesCache = null; go('/'); };
+  panel.appendChild(back);
+  const h = document.createElement('h1'); h.textContent = state.series;
+  panel.appendChild(h);
+  panel.insertAdjacentHTML('beforeend', `<div class="subtitle">${data.volumes.length} ${plural(data.volumes.length, ['том','тома','томов'])}</div>`);
+
+  const sr = seriesRead(state.series);
+  if (sr && sr.lastVolume){
+    const r = document.createElement('div');
+    r.className = 'resume';
+    r.innerHTML = `
+      <div style="min-width:0">
+        <div class="label">Продолжить</div>
+        <div class="title">${escapeHtml(sr.lastVolume)}</div>
+        <div class="sub">стр. ${sr.lastPage} · ${escapeHtml(relTime(sr.lastTs))}</div>
+      </div>
+      <div class="arrow">›</div>`;
+    r.onclick = () => {
+      state.volume = sr.lastVolume; state._pendingPage = sr.lastPage; state.view = 'reader';
+      go(`/?s=${encodeURIComponent(state.series)}&v=${encodeURIComponent(sr.lastVolume)}&p=${sr.lastPage}`);
+    };
+    panel.appendChild(r);
+  }
+
+  const list = document.createElement('div'); list.className = 'list';
+  for (const v of data.volumes){
+    const c = document.createElement('div'); c.className = 'card';
+    const vr = volumeRead(state.series, v.name);
+    const pct = vr && v.pages ? Math.min(100, Math.round(vr.page / v.pages * 100)) : 0;
+    const done = pct >= 98;
+    const chipHtml = vr ? `<span class="chip ${done ? 'done' : ''}">${done ? '✓ прочитан' : pct + '%'}</span>` : '';
+    const subRow = vr ? `<div class="progress-text ${done ? 'done' : ''}"><span class="dot"></span>стр. ${vr.page} / ${v.pages} · ${escapeHtml(relTime(vr.ts))}</div>` : '';
+    c.innerHTML = `
+      <div class="col">
+        <span class="name">${escapeHtml(v.name)}</span>
+        <span class="meta">${v.pages} стр.</span>
+        ${subRow}
+      </div>
+      <div class="right">${chipHtml}</div>
+      ${vr ? `<div class="pbar ${done ? 'done' : ''}"><i style="width:${pct}%"></i></div>` : ''}`;
+    c.onclick = () => { state.volume = v.name; state.spreadIdx = 0; state._pendingPage = null; state.view = 'reader'; go(`/?s=${encodeURIComponent(state.series)}&v=${encodeURIComponent(v.name)}`); };
+    list.appendChild(c);
+  }
+  panel.appendChild(list);
+  app.appendChild(panel);
+}
+
+function spreadEl(spread){
+  const el = document.createElement('div');
+  el.className = 'spread ' + (spread.type === 'double' ? 'double' : 'single');
+  for (const i of spread.pages){
+    const img = document.createElement('img');
+    img.src = imageUrl(state.pages[i]);
+    img.alt = '';
+    el.appendChild(img);
+  }
+  return el;
+}
+
+async function viewReader(){
+  app.innerHTML = '<div class="loading"><div>загружаем</div><div class="progress" id="prog"></div></div>';
+  const data = await fetchJSON(`/api/series/${encodeURIComponent(state.series)}/${encodeURIComponent(state.volume)}`);
+  state.pages = data.pages;
+  if (!state.pages.length){ app.innerHTML = '<div class="loading">пусто</div>'; return; }
+  ensureVolumesCache();
+
+  const urls = state.pages.map(imageUrl);
+  const prog = document.getElementById('prog');
+  state.aspects = await probeAll(urls, (d, t) => { if (prog) prog.textContent = `${d}/${t}`; });
+  state.spreads = buildSpreads(state.pages, state.aspects);
+
+  if (state._pendingPage){
+    state.spreadIdx = pageNumToSpreadIdx(state._pendingPage);
+    state._pendingPage = null;
+  } else {
+    const saved = volumeRead(state.series, state.volume);
+    if (saved && saved.page > 1){
+      state.spreadIdx = pageNumToSpreadIdx(saved.page);
+      toast('Продолжаем с', `стр. ${saved.page}`, 1300);
+    } else {
+      state.spreadIdx = Math.max(0, Math.min(state.spreadIdx, state.spreads.length - 1));
+    }
+  }
+
+  app.innerHTML = `
+    <div class="reader">
+      <div class="top-bar">
+        <button id="b-back">← Назад</button>
+        <div class="title">${escapeHtml(state.series)} · ${escapeHtml(state.volume)}</div>
+        <button id="b-jump">Перейти</button>
+      </div>
+      <div class="stage" id="stage"></div>
+      <div class="nav-btn left" id="b-prev">‹</div>
+      <div class="nav-btn right" id="b-next">›</div>
+      <div class="hud" id="hud"></div>
+    </div>`;
+
+  document.getElementById('b-back').onclick = () => {
+    state.view = 'volumes'; state.volume = null; state.pages = []; state.spreads = []; state.aspects = [];
+    go(`/?s=${encodeURIComponent(state.series)}`);
+  };
+  document.getElementById('b-jump').onclick = () => {
+    const n = prompt(`Страница 1–${state.pages.length}:`, currentPage1());
+    if (!n) return;
+    const x = Math.max(1, Math.min(state.pages.length, parseInt(n,10)));
+    jumpToSpread(pageNumToSpreadIdx(x));
+  };
+  document.getElementById('b-prev').onclick = goPrev;
+  document.getElementById('b-next').onclick = goNext;
+
+  renderInitial();
+  updateHud();
+  syncUrl();
+  preloadNeighbors();
+  attachInput();
+}
+
+function renderInitial(){
+  const stage = document.getElementById('stage');
+  if (!stage) return;
+  stage.innerHTML = '';
+  const sp = state.spreads[state.spreadIdx];
+  if (!sp) return;
+  const el = spreadEl(sp);
+  stage.appendChild(el);
+}
+
+function preloadNeighbors(){
+  for (let d = 1; d <= 3; d++){
+    for (const di of [-d, d]){
+      const i = state.spreadIdx + di;
+      if (i < 0 || i >= state.spreads.length) continue;
+      for (const p of state.spreads[i].pages){
+        const im = new Image(); im.src = imageUrl(state.pages[p]);
+      }
+    }
+  }
+}
+
+function currentPage1(){
+  const sp = state.spreads[state.spreadIdx];
+  return sp ? sp.pages[0] + 1 : 1;
+}
+function syncUrl(){
+  const u = new URL(location.href);
+  const p = currentPage1();
+  u.searchParams.set('p', p);
+  history.replaceState(null, '', u.toString());
+  recordRead(state.series, state.volume, p);
+}
+function updateHud(){
+  const hud = document.getElementById('hud');
+  if (!hud) return;
+  const sp = state.spreads[state.spreadIdx];
+  if (!sp){ hud.textContent = ''; return; }
+  const first = sp.pages[0] + 1;
+  const last = sp.pages[sp.pages.length - 1] + 1;
+  hud.textContent = first === last
+    ? `${first} / ${state.pages.length}`
+    : `${first}–${last} / ${state.pages.length}`;
+}
+
+async function jumpToSpread(newIdx, direction){
+  if (state.busy) return;
+  if (newIdx === state.spreadIdx) return;
+  if (newIdx < 0 || newIdx >= state.spreads.length) return;
+  const stage = document.getElementById('stage');
+  if (!stage) return;
+  state.busy = true;
+  const dir = direction || (newIdx > state.spreadIdx ? 'next' : 'prev');
+
+  const oldEl = stage.querySelector('.spread');
+  const newEl = spreadEl(state.spreads[newIdx]);
+  newEl.classList.add(dir === 'next' ? 'in-next' : 'in-prev');
+  stage.appendChild(newEl);
+
+  if (oldEl){
+    oldEl.classList.add(dir === 'next' ? 'out-next' : 'out-prev');
+  }
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      newEl.classList.remove('in-next', 'in-prev');
+      newEl.classList.add('settling');
+    });
+  });
+
+  setTimeout(() => {
+    if (oldEl && oldEl.parentNode) oldEl.parentNode.removeChild(oldEl);
+    newEl.classList.remove('settling');
+    state.busy = false;
+  }, 800);
+
+  state.spreadIdx = newIdx;
+  updateHud();
+  syncUrl();
+  preloadNeighbors();
+}
+
+async function goNext(){
+  if (state.busy) return;
+  if (state.spreadIdx + 1 >= state.spreads.length){ await jumpToVolume(+1, 'first'); return; }
+  jumpToSpread(state.spreadIdx + 1, 'next');
+}
+async function goPrev(){
+  if (state.busy) return;
+  if (state.spreadIdx <= 0){ await jumpToVolume(-1, 'last'); return; }
+  jumpToSpread(state.spreadIdx - 1, 'prev');
+}
+
+async function jumpToVolume(delta, startAt){
+  const sib = await siblingVolume(delta);
+  if (!sib){ toast(delta > 0 ? 'Это последний том' : 'Это первый том', null, 1400); return; }
+  state.busy = true;
+  toast(delta > 0 ? 'Следующий том' : 'Предыдущий том', sib.name, 1200);
+  setTimeout(() => {
+    state.volume = sib.name;
+    state._pendingPage = startAt === 'last' ? sib.pages : 1;
+    state.busy = false;
+    go(`/?s=${encodeURIComponent(state.series)}&v=${encodeURIComponent(state.volume)}&p=${state._pendingPage}`);
+  }, 1000);
+}
+
+function attachInput(){
+  document.removeEventListener('keydown', state._kh || (() => {}));
+  state._kh = (e) => {
+    if (state.view !== 'reader') return;
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp'){ goPrev(); e.preventDefault(); }
+    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' '){ goNext(); e.preventDefault(); }
+    if (e.key === 'Home'){ jumpToSpread(0); }
+    if (e.key === 'End'){ jumpToSpread(state.spreads.length - 1); }
+  };
+  document.addEventListener('keydown', state._kh);
+
+  const reader = document.querySelector('.reader');
+  if (!reader) return;
+  reader.addEventListener('click', (e) => {
+    if (e.target.closest('.top-bar') || e.target.closest('.nav-btn')) return;
+    const w = window.innerWidth;
+    if (e.clientX > w * 0.65) goNext();
+    else if (e.clientX < w * 0.35) goPrev();
+    else reader.classList.toggle('hide-ui');
+  });
+
+  let touchStart = null;
+  reader.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1){ touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now(), n: 1 }; }
+    else if (e.touches.length === 2){ touchStart = { t: Date.now(), n: 2 }; }
+  }, { passive: true });
+  reader.addEventListener('touchend', (e) => {
+    if (!touchStart) return;
+    if (touchStart.n === 2){ if (Date.now() - touchStart.t < 400) reader.classList.toggle('hide-ui'); touchStart = null; return; }
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.x;
+    const dy = t.clientY - touchStart.y;
+    const dt = Date.now() - touchStart.t;
+    touchStart = null;
+    if (dt > 600) return;
+    if (Math.abs(dx) > Math.abs(dy) * 1.2 && Math.abs(dx) > 50){
+      if (dx < 0) goNext(); else goPrev();
+    }
+  }, { passive: true });
+}
+
+function render(){
+  if (state.view === 'reader') viewReader();
+  else if (state.view === 'volumes') viewVolumes();
+  else viewSeries();
+}
+
+(() => {
+  const u = new URL(location.href);
+  state.series = u.searchParams.get('s');
+  state.volume = u.searchParams.get('v');
+  const p = u.searchParams.get('p');
+  state._pendingPage = p ? parseInt(p, 10) : null;
+  state.view = state.volume ? 'reader' : state.series ? 'volumes' : 'series';
+  render();
+})();
+</script>
+</body>
+</html>

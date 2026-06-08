@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Downloaded comics (8+ GB, copyrighted material)
+downloads/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local scratch
+were_is_dart.txt

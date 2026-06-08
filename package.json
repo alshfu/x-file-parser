@@ -1,0 +1,35 @@
+{
+  "name": "x-file-parser",
+  "version": "1.0.0",
+  "description": "Парсер и локальная читалка манги/комиксов на чистом Node.js — без зависимостей.",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "parse": "node index.js",
+    "serve": "node reader-server.js",
+    "bootstrap": "node bootstrap-manifest.mjs"
+  },
+  "keywords": [
+    "manga",
+    "comics",
+    "scraper",
+    "reader",
+    "parser",
+    "nodejs"
+  ],
+  "author": "Alexander Shchetinin",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alshfu/x-file-parser.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alshfu/x-file-parser/issues"
+  },
+  "homepage": "https://github.com/alshfu/x-file-parser#readme",
+  "private": true
+}
