@@ -8,7 +8,9 @@
     "start": "node index.js",
     "parse": "node index.js",
     "serve": "node reader-server.js",
-    "bootstrap": "node bootstrap-manifest.mjs"
+    "bootstrap": "node bootstrap-manifest.mjs",
+    "ios:sync": "cap sync ios",
+    "ios:open": "cap open ios"
   },
   "keywords": [
     "manga",
@@ -31,5 +33,11 @@
     "url": "https://github.com/alshfu/x-file-parser/issues"
   },
   "homepage": "https://github.com/alshfu/x-file-parser#readme",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/ios": "^8.4.0"
+  }
 }

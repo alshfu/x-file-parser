@@ -142,17 +142,18 @@
 </head>
 <body>
 <div id="app"></div>
-<script>
+<script type="module">
+import * as platform from './platform.mjs';
+
 const app = document.getElementById('app');
 const state = {
   view:'series', series:null, volume:null,
-  pages:[], aspects:[], spreads:[],
+  pages:[], urls:[], aspects:[], spreads:[],
   volumesCache:null,
   spreadIdx:0,
   busy:false,
 };
 
-const fetchJSON = async u => (await fetch(u)).json();
 const escapeHtml = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function plural(n, forms){
   const a = Math.abs(n)%100, b = a%10;
@@ -218,12 +219,13 @@ function toast(text, sub, ms=1500){
   setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
 }
 
-function imageUrl(file){ return `/files/${encodeURIComponent(state.series)}/${encodeURIComponent(state.volume)}/${encodeURIComponent(file)}`; }
+async function fillUrls(){
+  state.urls = await Promise.all(state.pages.map(p => platform.imageUrl(state.series, state.volume, p)));
+}
 
 async function ensureVolumesCache(){
   if (state.volumesCache) return state.volumesCache;
-  const data = await fetchJSON(`/api/series/${encodeURIComponent(state.series)}`);
-  state.volumesCache = data.volumes;
+  state.volumesCache = await platform.listVolumes(state.series);
   return state.volumesCache;
 }
 async function siblingVolume(delta){
@@ -290,7 +292,7 @@ function pageNumToSpreadIdx(pageNum1based){
 }
 
 async function viewSeries(){
-  const data = await fetchJSON('/api/series');
+  const data = await platform.listSeries();
   app.innerHTML = '';
   const panel = document.createElement('div');
   panel.className = 'panel';
@@ -344,8 +346,9 @@ async function viewSeries(){
 }
 
 async function viewVolumes(){
-  const data = await fetchJSON(`/api/series/${encodeURIComponent(state.series)}`);
-  state.volumesCache = data.volumes;
+  const volumes = await platform.listVolumes(state.series);
+  state.volumesCache = volumes;
+  const data = { volumes };
   app.innerHTML = '';
   const panel = document.createElement('div');
   panel.className = 'panel';
@@ -404,7 +407,7 @@ function spreadEl(spread){
   el.className = 'spread ' + (spread.type === 'double' ? 'double' : 'single');
   for (const i of spread.pages){
     const img = document.createElement('img');
-    img.src = imageUrl(state.pages[i]);
+    img.src = state.urls[i];
     img.alt = '';
     el.appendChild(img);
   }
@@ -413,14 +416,13 @@ function spreadEl(spread){
 
 async function viewReader(){
   app.innerHTML = '<div class="loading"><div>загружаем</div><div class="progress" id="prog"></div></div>';
-  const data = await fetchJSON(`/api/series/${encodeURIComponent(state.series)}/${encodeURIComponent(state.volume)}`);
-  state.pages = data.pages;
+  state.pages = await platform.listPages(state.series, state.volume);
   if (!state.pages.length){ app.innerHTML = '<div class="loading">пусто</div>'; return; }
   ensureVolumesCache();
+  await fillUrls();
 
-  const urls = state.pages.map(imageUrl);
   const prog = document.getElementById('prog');
-  state.aspects = await probeAll(urls, (d, t) => { if (prog) prog.textContent = `${d}/${t}`; });
+  state.aspects = await probeAll(state.urls, (d, t) => { if (prog) prog.textContent = `${d}/${t}`; });
   state.spreads = buildSpreads(state.pages, state.aspects);
 
   if (state._pendingPage){
@@ -485,7 +487,7 @@ function preloadNeighbors(){
       const i = state.spreadIdx + di;
       if (i < 0 || i >= state.spreads.length) continue;
       for (const p of state.spreads[i].pages){
-        const im = new Image(); im.src = imageUrl(state.pages[p]);
+        const im = new Image(); im.src = state.urls[p];
       }
     }
   }
@@ -617,13 +619,13 @@ function attachInput(){
 }
 
 let parseModalEl = null;
-let parseES = null;
+let parseUnsub = null;
 let parseSnap = { active: null, queue: [], history: [] };
 let parseLogJobId = null;
 let parseLogBuf = '';
 
 function closeParseModal(){
-  if (parseES){ try { parseES.close(); } catch{} parseES = null; }
+  if (parseUnsub){ try { parseUnsub(); } catch{} parseUnsub = null; }
   if (parseModalEl){ parseModalEl.classList.remove('show'); setTimeout(() => { if (parseModalEl){ parseModalEl.remove(); parseModalEl = null; } }, 220); }
 }
 
@@ -696,15 +698,11 @@ function setLogJob(jobId){
 }
 
 function connectParseStream(){
-  if (parseES){ try { parseES.close(); } catch{} }
-  parseES = new EventSource('/api/parse/events');
-  parseES.onmessage = (ev) => {
-    let d; try { d = JSON.parse(ev.data); } catch { return; }
+  if (parseUnsub){ try { parseUnsub(); } catch{} }
+  parseUnsub = platform.parseSubscribe((d) => {
     if (d.type === 'snapshot'){
       parseSnap = { active: d.active, queue: d.queue || [], history: d.history || [] };
-      if (parseSnap.active) {
-        if (parseLogJobId !== parseSnap.active.id) setLogJob(parseSnap.active.id);
-      }
+      if (parseSnap.active && parseLogJobId !== parseSnap.active.id) setLogJob(parseSnap.active.id);
       renderParseSections();
       return;
     }
@@ -741,8 +739,7 @@ function connectParseStream(){
       renderParseSections();
       return;
     }
-  };
-  parseES.onerror = () => { /* EventSource auto-reconnects */ };
+  });
 }
 
 function openParseModal(){
@@ -788,26 +785,20 @@ async function submitParse(){
   const u = (input.value || '').trim();
   if (!u){ input.focus(); return; }
   try {
-    const r = await fetch('/api/parse', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: u }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok){ toast('Не добавлено', data.error || ('HTTP ' + r.status), 1800); return; }
+    await platform.parseAdd(u);
     input.value = '';
     input.focus();
   } catch (e){
-    toast('Ошибка сети', e.message, 1800);
+    toast('Не добавлено', e.message, 1800);
   }
 }
 
 async function stopParse(){
-  try { await fetch('/api/parse/stop', { method: 'POST' }); } catch {}
+  try { await platform.parseStop(); } catch {}
 }
 
 async function cancelQueuedJob(id){
-  try { await fetch(`/api/parse/queue/${id}`, { method: 'DELETE' }); } catch {}
+  try { await platform.parseCancel(id); } catch {}
 }
 
 function render(){

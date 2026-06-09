@@ -12,6 +12,7 @@ const HISTORY_LIMIT = 20;
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.jpg': 'image/jpeg',
@@ -19,6 +20,24 @@ const MIME = {
   '.png': 'image/png',
   '.webp': 'image/webp',
 };
+
+const WWW = path.resolve('./www');
+
+async function serveStatic(p, res) {
+  const rel = p.replace(/^\/+/, '');
+  if (!rel || rel.includes('..')) return false;
+  const file = path.join(WWW, rel);
+  if (!file.startsWith(WWW)) return false;
+  try {
+    const buf = await fs.readFile(file);
+    const ext = path.extname(file).toLowerCase();
+    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    res.end(buf);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function pageNum(name) {
   const m = name.match(/page\s+(\d+)/i);
@@ -225,7 +244,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (p === '/' || p === '/index.html') {
-      const html = await fs.readFile(path.resolve('./reader.html'));
+      const html = await fs.readFile(path.resolve('./www/index.html'));
       res.writeHead(200, { 'Content-Type': MIME['.html'] });
       res.end(html);
       return;
@@ -330,6 +349,8 @@ const server = http.createServer(async (req, res) => {
       res.end(buf);
       return;
     }
+
+    if (await serveStatic(p, res)) return;
 
     res.writeHead(404);
     res.end('404');
