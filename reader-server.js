@@ -5,10 +5,9 @@ import url from 'node:url';
 import { spawn } from 'node:child_process';
 
 const ROOT = path.resolve('./downloads');
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 const LOG_LIMIT = 4000;
-
-let currentJob = null;
+const HISTORY_LIMIT = 20;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -94,59 +93,130 @@ function readBody(req, limit = 4096) {
   });
 }
 
-function pushLog(text) {
-  if (!currentJob) return;
-  currentJob.log.push(text);
-  if (currentJob.log.length > LOG_LIMIT) currentJob.log.splice(0, currentJob.log.length - LOG_LIMIT);
-  for (const l of currentJob.listeners) l({ type: 'log', text });
+let nextJobId = 1;
+const jobs = new Map();
+const queue = [];
+const history = [];
+let activeJobId = null;
+const globalListeners = new Set();
+
+function emit(ev) {
+  for (const l of globalListeners) l(ev);
 }
 
-function startParse(targetUrl) {
-  const child = spawn(process.execPath, ['index.js', targetUrl], {
+function jobView(j) {
+  if (!j) return null;
+  return {
+    id: j.id,
+    url: j.url,
+    status: j.status,
+    queuedAt: j.queuedAt,
+    startedAt: j.startedAt || null,
+    finishedAt: j.finishedAt || null,
+    exitCode: j.exitCode == null ? null : j.exitCode,
+  };
+}
+
+function snapshot() {
+  return {
+    active: activeJobId != null ? jobView(jobs.get(activeJobId)) : null,
+    queue: queue.map((id) => jobView(jobs.get(id))),
+    history: history.map((id) => jobView(jobs.get(id))),
+  };
+}
+
+function pushLog(job, text) {
+  job.log.push(text);
+  if (job.log.length > LOG_LIMIT) job.log.splice(0, job.log.length - LOG_LIMIT);
+  emit({ type: 'log', jobId: job.id, text });
+}
+
+function createJob(targetUrl) {
+  const id = nextJobId++;
+  const job = {
+    id,
+    url: targetUrl,
+    status: 'queued',
+    queuedAt: Date.now(),
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+    log: [],
+    child: null,
+  };
+  jobs.set(id, job);
+  queue.push(id);
+  emit({ type: 'queued', job: jobView(job) });
+  tryStartNext();
+  return job;
+}
+
+function tryStartNext() {
+  if (activeJobId != null) return;
+  if (queue.length === 0) return;
+  const id = queue.shift();
+  startJob(id);
+}
+
+function startJob(id) {
+  const job = jobs.get(id);
+  if (!job) return;
+  activeJobId = id;
+  job.status = 'running';
+  job.startedAt = Date.now();
+  const child = spawn(process.execPath, ['index.js', job.url], {
     cwd: path.resolve('.'),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  currentJob = {
-    url: targetUrl,
-    status: 'running',
-    startedAt: Date.now(),
-    log: [],
-    listeners: new Set(),
-    child,
-    exitCode: null,
-  };
+  job.child = child;
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (t) => pushLog(t));
-  child.stderr.on('data', (t) => pushLog(t));
+  child.stdout.on('data', (t) => pushLog(job, t));
+  child.stderr.on('data', (t) => pushLog(job, t));
   child.on('exit', (code, sig) => {
-    if (!currentJob) return;
-    currentJob.status = code === 0 ? 'done' : 'error';
-    currentJob.exitCode = code ?? -1;
-    currentJob.finishedAt = Date.now();
-    const tail = `\n[процесс завершён: code=${code} signal=${sig ?? '-'}]\n`;
-    currentJob.log.push(tail);
-    for (const l of currentJob.listeners) {
-      l({ type: 'log', text: tail });
-      l({ type: 'done', code: currentJob.exitCode });
+    job.status = code === 0 ? 'done' : 'error';
+    job.exitCode = code == null ? -1 : code;
+    job.finishedAt = Date.now();
+    const tail = `\n[процесс завершён: code=${code} signal=${sig == null ? '-' : sig}]\n`;
+    pushLog(job, tail);
+    job.child = null;
+    activeJobId = null;
+    history.unshift(id);
+    while (history.length > HISTORY_LIMIT) {
+      const oldId = history.pop();
+      jobs.delete(oldId);
     }
-    currentJob.listeners.clear();
-    currentJob.child = null;
+    emit({ type: 'done', job: jobView(job) });
+    tryStartNext();
   });
   child.on('error', (e) => {
-    pushLog(`\n[ошибка запуска: ${e.message}]\n`);
+    pushLog(job, `\n[ошибка запуска: ${e.message}]\n`);
   });
+  emit({ type: 'started', job: jobView(job) });
 }
 
-function jobSnapshot() {
-  if (!currentJob) return { status: 'idle' };
-  return {
-    status: currentJob.status,
-    url: currentJob.url,
-    startedAt: currentJob.startedAt,
-    finishedAt: currentJob.finishedAt || null,
-    exitCode: currentJob.exitCode,
-  };
+function stopActive() {
+  if (activeJobId == null) return false;
+  const job = jobs.get(activeJobId);
+  if (job && job.child) {
+    job.child.kill('SIGTERM');
+    return true;
+  }
+  return false;
+}
+
+function cancelQueued(id) {
+  const i = queue.indexOf(id);
+  if (i < 0) return false;
+  queue.splice(i, 1);
+  const job = jobs.get(id);
+  if (job) {
+    job.status = 'cancelled';
+    job.finishedAt = Date.now();
+  }
+  emit({ type: 'cancelled', jobId: id });
+  jobs.delete(id);
+  return true;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -192,20 +262,15 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: 'нужен валидный http(s) URL' }));
         return;
       }
-      if (currentJob && currentJob.status === 'running') {
-        res.writeHead(409, { 'Content-Type': MIME['.json'] });
-        res.end(JSON.stringify({ error: 'парсер уже работает', current: jobSnapshot() }));
-        return;
-      }
-      startParse(targetUrl);
+      const job = createJob(targetUrl);
       res.writeHead(200, { 'Content-Type': MIME['.json'] });
-      res.end(JSON.stringify({ ok: true, job: jobSnapshot() }));
+      res.end(JSON.stringify({ ok: true, job: jobView(job) }));
       return;
     }
 
     if (p === '/api/parse/status') {
       res.writeHead(200, { 'Content-Type': MIME['.json'] });
-      res.end(JSON.stringify(jobSnapshot()));
+      res.end(JSON.stringify(snapshot()));
       return;
     }
 
@@ -217,28 +282,41 @@ const server = http.createServer(async (req, res) => {
         'X-Accel-Buffering': 'no',
       });
       const send = (ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`);
-      if (!currentJob) { send({ type: 'idle' }); res.end(); return; }
-      send({ type: 'meta', url: currentJob.url, status: currentJob.status, startedAt: currentJob.startedAt });
-      if (currentJob.log.length) send({ type: 'log', text: currentJob.log.join('') });
-      if (currentJob.status !== 'running') { send({ type: 'done', code: currentJob.exitCode }); res.end(); return; }
+      send({ type: 'snapshot', ...snapshot() });
+      if (activeJobId != null) {
+        const j = jobs.get(activeJobId);
+        if (j && j.log.length) send({ type: 'log', jobId: j.id, text: j.log.join('') });
+      }
       const listener = (ev) => send(ev);
-      currentJob.listeners.add(listener);
+      globalListeners.add(listener);
       const heartbeat = setInterval(() => res.write(`: ping\n\n`), 15000);
       req.on('close', () => {
         clearInterval(heartbeat);
-        if (currentJob) currentJob.listeners.delete(listener);
+        globalListeners.delete(listener);
       });
       return;
     }
 
     if (p === '/api/parse/stop' && req.method === 'POST') {
-      if (currentJob && currentJob.status === 'running' && currentJob.child) {
-        currentJob.child.kill('SIGTERM');
+      if (stopActive()) {
         res.writeHead(200, { 'Content-Type': MIME['.json'] });
         res.end(JSON.stringify({ ok: true }));
       } else {
         res.writeHead(409, { 'Content-Type': MIME['.json'] });
         res.end(JSON.stringify({ error: 'нечего останавливать' }));
+      }
+      return;
+    }
+
+    const cancelMatch = p.match(/^\/api\/parse\/queue\/(\d+)$/);
+    if (cancelMatch && (req.method === 'DELETE' || req.method === 'POST')) {
+      const id = parseInt(cancelMatch[1], 10);
+      if (cancelQueued(id)) {
+        res.writeHead(200, { 'Content-Type': MIME['.json'] });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(404, { 'Content-Type': MIME['.json'] });
+        res.end(JSON.stringify({ error: 'нет такого задания в очереди' }));
       }
       return;
     }

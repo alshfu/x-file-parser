@@ -6,10 +6,12 @@
 <title>Читалка</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-  html,body{height:100%;background:#08080a;color:#eee;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden;overscroll-behavior:none}
+  html{height:100%}
+  body{min-height:100%;background:#08080a;color:#eee;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:none}
+  body.reader-active{overflow:hidden;height:100%}
   a{color:#9cf;text-decoration:none}
 
-  .panel{padding:36px 24px;max-width:920px;margin:0 auto;height:100%;overflow-y:auto;animation:fadeIn .35s ease}
+  .panel{padding:36px 24px 64px;max-width:920px;margin:0 auto;animation:fadeIn .35s ease}
   .panel h1{font-size:28px;margin-bottom:6px;font-weight:600;letter-spacing:-0.5px;background:linear-gradient(135deg,#fff,#9aa);-webkit-background-clip:text;background-clip:text;color:transparent}
   .panel .subtitle{color:#666;font-size:13px;margin-bottom:24px}
   .list{display:grid;gap:10px}
@@ -117,8 +119,25 @@
   .modal-body .status .pill.done{background:rgba(120,200,120,.15);color:#9c9}
   .modal-body .status .pill.error{background:rgba(220,90,80,.18);color:#f88}
   @keyframes pulse{50%{opacity:.55}}
-  .modal-body .log{flex:1;min-height:200px;max-height:48vh;overflow-y:auto;background:#06080c;border:1px solid #1d2129;border-radius:10px;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#bcd;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+  .modal-body .log{flex:1;min-height:160px;max-height:42vh;overflow-y:auto;background:#06080c;border:1px solid #1d2129;border-radius:10px;padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#bcd;white-space:pre-wrap;word-break:break-word;line-height:1.5}
   .modal-body .log:empty::before{content:"лог пуст";color:#444;font-style:italic}
+
+  .dlq-section{display:flex;flex-direction:column;gap:6px}
+  .dlq-section .title{font-size:10px;color:#6a7280;text-transform:uppercase;letter-spacing:.7px;font-weight:600;padding:0 2px}
+  .dlq-list{display:flex;flex-direction:column;gap:6px}
+  .dlq-item{display:flex;align-items:center;gap:10px;padding:9px 12px;background:#0c0e13;border:1px solid #1d2129;border-radius:9px;font-size:12px;color:#cdd}
+  .dlq-item.active{border-color:#3a5a8a;background:linear-gradient(180deg,rgba(80,120,180,.14),rgba(80,120,180,.05))}
+  .dlq-item .url{flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:#bcd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+  .dlq-item .meta{font-size:10.5px;color:#666;font-variant-numeric:tabular-nums;flex:none}
+  .dlq-item .pill{padding:2px 8px;border-radius:999px;font-size:9.5px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;flex:none}
+  .dlq-item .pill.queued{background:rgba(140,160,200,.12);color:#9ab}
+  .dlq-item .pill.running{background:rgba(255,200,80,.15);color:#fc8;animation:pulse 1.5s ease-in-out infinite}
+  .dlq-item .pill.done{background:rgba(120,200,120,.15);color:#9c9}
+  .dlq-item .pill.error{background:rgba(220,90,80,.18);color:#f88}
+  .dlq-item .pill.cancelled{background:rgba(140,140,140,.15);color:#aaa}
+  .dlq-item button{background:transparent;border:1px solid #2a2f38;color:#9ab;border-radius:7px;padding:4px 9px;font-size:11px;cursor:pointer;transition:background .15s,border-color .15s,color .15s;flex:none}
+  .dlq-item button:hover{background:rgba(220,90,80,.12);border-color:rgba(220,90,80,.4);color:#f88}
+  .dlq-empty{font-size:11.5px;color:#555;font-style:italic;padding:4px 2px}
 </style>
 </head>
 <body>
@@ -599,36 +618,81 @@ function attachInput(){
 
 let parseModalEl = null;
 let parseES = null;
+let parseSnap = { active: null, queue: [], history: [] };
+let parseLogJobId = null;
+let parseLogBuf = '';
 
 function closeParseModal(){
   if (parseES){ try { parseES.close(); } catch{} parseES = null; }
   if (parseModalEl){ parseModalEl.classList.remove('show'); setTimeout(() => { if (parseModalEl){ parseModalEl.remove(); parseModalEl = null; } }, 220); }
 }
 
-function setParseStatus(s){
-  if (!parseModalEl) return;
-  const pill = parseModalEl.querySelector('.pill');
-  const text = parseModalEl.querySelector('.status .text');
-  const runBtn = parseModalEl.querySelector('#m-run');
-  const stopBtn = parseModalEl.querySelector('#m-stop');
-  const input = parseModalEl.querySelector('input[type=url]');
-  const map = { idle:['idle','готов'], running:['running','работает…'], done:['done','готово ✓'], error:['error','ошибка'] };
-  const [cls, label] = map[s] || map.idle;
-  pill.className = 'pill ' + cls;
-  pill.textContent = cls;
-  text.textContent = label;
-  const running = s === 'running';
-  runBtn.disabled = running;
-  input.disabled = running;
-  stopBtn.style.display = running ? '' : 'none';
+function shortTime(ts){
+  if (!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
-function appendLog(text){
+function jobItem(job, kind){
+  const cancelBtn = kind === 'queue' ? `<button data-cancel="${job.id}">отмена</button>` : '';
+  const stopBtn = kind === 'active' ? `<button data-stop="1">стоп</button>` : '';
+  const ts = kind === 'active' ? shortTime(job.startedAt) : kind === 'queue' ? shortTime(job.queuedAt) : shortTime(job.finishedAt || job.startedAt || job.queuedAt);
+  return `<div class="dlq-item ${kind === 'active' ? 'active' : ''}">
+    <span class="pill ${job.status}">${job.status}</span>
+    <span class="url" title="${escapeHtml(job.url)}">${escapeHtml(job.url)}</span>
+    <span class="meta">${ts}</span>
+    ${cancelBtn}${stopBtn}
+  </div>`;
+}
+
+function renderParseSections(){
   if (!parseModalEl) return;
-  const log = parseModalEl.querySelector('.log');
+  const root = parseModalEl.querySelector('#m-sections');
+  if (!root) return;
+  const parts = [];
+  if (parseSnap.active){
+    parts.push(`<div class="dlq-section"><div class="title">Сейчас качается</div><div class="dlq-list">${jobItem(parseSnap.active, 'active')}</div></div>`);
+  }
+  parts.push(`<div class="dlq-section"><div class="title">Очередь · ${parseSnap.queue.length}</div><div class="dlq-list">${
+    parseSnap.queue.length ? parseSnap.queue.map(j => jobItem(j, 'queue')).join('') : '<div class="dlq-empty">пусто</div>'
+  }</div></div>`);
+  if (parseSnap.history.length){
+    parts.push(`<div class="dlq-section"><div class="title">История · последние ${parseSnap.history.length}</div><div class="dlq-list">${
+      parseSnap.history.slice(0, 8).map(j => jobItem(j, 'history')).join('')
+    }</div></div>`);
+  }
+  root.innerHTML = parts.join('');
+
+  root.querySelectorAll('[data-cancel]').forEach(b => {
+    b.onclick = () => cancelQueuedJob(parseInt(b.dataset.cancel, 10));
+  });
+  const stopBtn = root.querySelector('[data-stop]');
+  if (stopBtn) stopBtn.onclick = stopParse;
+}
+
+function renderParseLog(){
+  if (!parseModalEl) return;
+  const log = parseModalEl.querySelector('#m-log');
+  if (!log) return;
+  const wasAtBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 10;
+  log.textContent = parseLogBuf;
+  if (wasAtBottom) log.scrollTop = log.scrollHeight;
+}
+
+function appendParseLog(text){
+  parseLogBuf += text;
+  if (!parseModalEl) return;
+  const log = parseModalEl.querySelector('#m-log');
+  if (!log) return;
   const wasAtBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 10;
   log.textContent += text;
   if (wasAtBottom) log.scrollTop = log.scrollHeight;
+}
+
+function setLogJob(jobId){
+  parseLogJobId = jobId;
+  parseLogBuf = '';
+  renderParseLog();
 }
 
 function connectParseStream(){
@@ -636,36 +700,68 @@ function connectParseStream(){
   parseES = new EventSource('/api/parse/events');
   parseES.onmessage = (ev) => {
     let d; try { d = JSON.parse(ev.data); } catch { return; }
-    if (d.type === 'idle'){ setParseStatus('idle'); parseES.close(); parseES = null; return; }
-    if (d.type === 'meta'){ setParseStatus(d.status); return; }
-    if (d.type === 'log'){ appendLog(d.text); return; }
+    if (d.type === 'snapshot'){
+      parseSnap = { active: d.active, queue: d.queue || [], history: d.history || [] };
+      if (parseSnap.active) {
+        if (parseLogJobId !== parseSnap.active.id) setLogJob(parseSnap.active.id);
+      }
+      renderParseSections();
+      return;
+    }
+    if (d.type === 'queued'){
+      parseSnap.queue.push(d.job);
+      renderParseSections();
+      return;
+    }
+    if (d.type === 'started'){
+      parseSnap.queue = parseSnap.queue.filter(j => j.id !== d.job.id);
+      parseSnap.active = d.job;
+      setLogJob(d.job.id);
+      renderParseSections();
+      return;
+    }
+    if (d.type === 'log'){
+      if (d.jobId === parseLogJobId) appendParseLog(d.text);
+      return;
+    }
     if (d.type === 'done'){
-      setParseStatus(d.code === 0 ? 'done' : 'error');
-      parseES.close(); parseES = null;
-      if (d.code === 0) toast('Серия загружена', null, 1600);
+      if (parseSnap.active && parseSnap.active.id === d.job.id){
+        parseSnap.history.unshift(d.job);
+        parseSnap.active = null;
+      }
+      renderParseSections();
+      if (d.job.exitCode === 0){
+        toast('Серия загружена', null, 1600);
+        if (state.view === 'series') viewSeries();
+      }
+      return;
+    }
+    if (d.type === 'cancelled'){
+      parseSnap.queue = parseSnap.queue.filter(j => j.id !== d.jobId);
+      renderParseSections();
+      return;
     }
   };
-  parseES.onerror = () => { /* keep retrying — EventSource auto-reconnects */ };
+  parseES.onerror = () => { /* EventSource auto-reconnects */ };
 }
 
-async function openParseModal(){
+function openParseModal(){
   if (parseModalEl) return;
   parseModalEl = document.createElement('div');
   parseModalEl.className = 'modal-backdrop';
   parseModalEl.innerHTML = `
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head">
-        <h2>Добавить серию</h2>
+        <h2>Очередь закачек</h2>
         <button class="modal-close" id="m-x" aria-label="Закрыть">×</button>
       </div>
       <div class="modal-body">
         <div class="row">
           <input type="url" id="m-url" placeholder="https://…/reader/<news_id>/<chapter_id>  или  URL страницы серии" autocomplete="off" spellcheck="false">
-          <button class="btn" id="m-run">Запустить</button>
-          <button class="btn danger" id="m-stop" style="display:none">Стоп</button>
+          <button class="btn" id="m-add">+ В очередь</button>
         </div>
-        <div class="hint">Поддерживается URL страницы главы (<code>/reader/&lt;news_id&gt;/&lt;chapter_id&gt;</code>) — качается с этой главы и дальше, или URL серии — качается всё с начала.</div>
-        <div class="status"><span class="pill idle">idle</span><span class="text">готов</span></div>
+        <div class="hint">Поддерживается URL страницы главы (<code>/reader/&lt;news_id&gt;/&lt;chapter_id&gt;</code>) — качается с этой главы и дальше, или URL серии — качается всё с начала. Несколько ссылок можно добавлять подряд — они выполнятся одна за другой.</div>
+        <div id="m-sections"></div>
         <div class="log" id="m-log"></div>
       </div>
     </div>`;
@@ -674,20 +770,16 @@ async function openParseModal(){
 
   parseModalEl.querySelector('#m-x').onclick = closeParseModal;
   parseModalEl.addEventListener('click', (e) => { if (e.target === parseModalEl) closeParseModal(); });
-  parseModalEl.querySelector('#m-run').onclick = submitParse;
-  parseModalEl.querySelector('#m-stop').onclick = stopParse;
+  parseModalEl.querySelector('#m-add').onclick = submitParse;
   parseModalEl.querySelector('#m-url').addEventListener('keydown', (e) => {
     if (e.key === 'Enter'){ e.preventDefault(); submitParse(); }
     if (e.key === 'Escape'){ e.preventDefault(); closeParseModal(); }
   });
   parseModalEl.querySelector('#m-url').focus();
 
-  try {
-    const st = await fetchJSON('/api/parse/status');
-    setParseStatus(st.status);
-    if (st.url) parseModalEl.querySelector('#m-url').value = st.url;
-    if (st.status === 'running' || st.status === 'done' || st.status === 'error') connectParseStream();
-  } catch {}
+  renderParseSections();
+  renderParseLog();
+  connectParseStream();
 }
 
 async function submitParse(){
@@ -695,9 +787,6 @@ async function submitParse(){
   const input = parseModalEl.querySelector('#m-url');
   const u = (input.value || '').trim();
   if (!u){ input.focus(); return; }
-  const log = parseModalEl.querySelector('.log');
-  log.textContent = '';
-  setParseStatus('running');
   try {
     const r = await fetch('/api/parse', {
       method: 'POST',
@@ -705,11 +794,11 @@ async function submitParse(){
       body: JSON.stringify({ url: u }),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok){ appendLog(`[ошибка] ${data.error || r.status}\n`); setParseStatus('error'); return; }
-    connectParseStream();
+    if (!r.ok){ toast('Не добавлено', data.error || ('HTTP ' + r.status), 1800); return; }
+    input.value = '';
+    input.focus();
   } catch (e){
-    appendLog(`[ошибка сети] ${e.message}\n`);
-    setParseStatus('error');
+    toast('Ошибка сети', e.message, 1800);
   }
 }
 
@@ -717,7 +806,12 @@ async function stopParse(){
   try { await fetch('/api/parse/stop', { method: 'POST' }); } catch {}
 }
 
+async function cancelQueuedJob(id){
+  try { await fetch(`/api/parse/queue/${id}`, { method: 'DELETE' }); } catch {}
+}
+
 function render(){
+  document.body.classList.toggle('reader-active', state.view === 'reader');
   if (state.view === 'reader') viewReader();
   else if (state.view === 'volumes') viewVolumes();
   else viewSeries();
